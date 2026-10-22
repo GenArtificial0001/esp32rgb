@@ -35,3 +35,13 @@ SINGLE_PIN = 2
 
 # Puerto del servidor web.
 HTTP_PORT = 80
+
+# --- Control remoto por MQTT ---------------------------------------------------
+# La página publicada en internet (GitHub Pages) no puede llegar a la placa
+# directamente (NAT, o Wokwi gratis sin conexiones entrantes). Las dos partes se
+# encuentran en un broker MQTT público: la página publica el color y la placa
+# se suscribe. DEVICE_ID tiene que coincidir con el ?id= de la página.
+MQTT_ENABLED = True
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+DEVICE_ID = "genartificial0001-rgb"

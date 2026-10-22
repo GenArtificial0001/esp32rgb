@@ -123,6 +123,18 @@ def color_json(led):
                        "mode": led.mode})
 
 
+bridge = None  # puente MQTT, se crea en serve() si MQTT_ENABLED
+
+
+def apply_color(led, rgb):
+    # Punto único para cambiar el color, venga de la web local, la consola
+    # serie o MQTT: así el estado guardado y el publicado nunca divergen.
+    led.set(*rgb)
+    save_color(*led.color)
+    if bridge:
+        bridge.publish_state(led.color)
+
+
 def handle(cl, led):
     req = cl.recv(1024).decode()
     if not req:
@@ -148,12 +160,10 @@ def handle(cl, led):
             send(cl, "400 Bad Request", "application/json",
                  '{"error": "color invalido"}')
             return
-        led.set(r, g, b)
-        save_color(*led.color)
+        apply_color(led, (r, g, b))
         send(cl, "200 OK", "application/json", color_json(led))
     elif path == "/api/off":
-        led.off()
-        save_color(0, 0, 0)
+        apply_color(led, (0, 0, 0))
         send(cl, "200 OK", "application/json", color_json(led))
     else:
         send(cl, "404 Not Found", "text/plain", "No encontrado")
@@ -175,29 +185,37 @@ def handle_serial(led):
     if not line.strip():
         return
     try:
-        led.set(*parse_serial(line))
+        apply_color(led, parse_serial(line))
     except ValueError:
         print("Formato: #RRGGBB | R G B | off")
         return
-    save_color(*led.color)
     print("Color:", "#%02x%02x%02x" % led.color)
 
 
 def serve(led):
+    global bridge
     addr = socket.getaddrinfo("0.0.0.0", config.HTTP_PORT)[0][-1]
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(addr)
     s.listen(4)
-    # Se atienden a la vez el servidor HTTP y la consola serie: así el color
-    # se puede cambiar por USB o en Wokwi, donde la web no es accesible gratis.
+    # Un solo bucle atiende el servidor HTTP local, la consola serie y MQTT
+    # (la vía que usa la página publicada en internet y la que funciona en Wokwi).
     poller = select.poll()
     poller.register(s, select.POLLIN)
     poller.register(sys.stdin, select.POLLIN)
+    if config.MQTT_ENABLED:
+        from mqtt_bridge import Bridge
+        bridge = Bridge(poller, lambda rgb: apply_color(led, rgb))
     print("Consola serie: escribí #RRGGBB, 'R G B' u 'off' y Enter")
     while True:
-        for obj, _ in poller.poll():
-            if obj is s:
+        if bridge:
+            bridge.tick()
+        # Timeout de 1 s para que tick() corra aunque no llegue nada.
+        for obj, _ in poller.poll(1000):
+            if bridge and obj is bridge.sock:
+                bridge.readable()
+            elif obj is s:
                 cl, remote = s.accept()
                 cl.settimeout(5)
                 try:

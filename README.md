@@ -7,16 +7,26 @@ teléfono, sin escribir códigos. Suma un control de brillo, colores rápidos y
 botones Apagar/Blanco. La página es responsiva: en vertical apila todo, y con
 el celular acostado o en PC muestra el selector y los controles lado a lado.
 
-Cada cambio se envía a la placa y se aplica al LED incorporado al instante. El
-último color se guarda en `color.json` y se restaura al reiniciar.
+La página funciona de dos formas:
+
+- **Local**: abierta desde la IP de la placa (`http://192.168.x.x/`), habla con
+  la ESP32 por HTTP en la misma red.
+- **Desde internet**: publicada en GitHub Pages, habla con la placa a través de
+  un broker MQTT público. Así se controla desde cualquier lugar, y también la
+  placa **simulada en Wokwi** (que no acepta conexiones entrantes).
+
+El último color se guarda en `color.json` y se restaura al reiniciar.
 
 ## Estructura
 
 ```
 config.py        Wi-Fi, tipo de LED y pines (único archivo a editar)
 led.py           Abstracción del LED: neopixel / rgb_pwm / single
-main.py          Conexión Wi-Fi (con AP de respaldo) + servidor HTTP
-www/index.html   Interfaz web (sin dependencias externas)
+main.py          Conexión Wi-Fi (con AP de respaldo) + servidor HTTP + bucle principal
+mqtt_bridge.py   Puente MQTT para la página publicada en internet
+www/index.html   Interfaz web (sin dependencias externas, cliente MQTT propio)
+index.html       Redirección a www/ para GitHub Pages
+wokwi/           Circuito y config para el simulador Wokwi
 ```
 
 ## ¿Qué LED tiene mi placa?
@@ -54,7 +64,7 @@ Con `single` el LED no puede mostrar tonos: el color elegido se convierte a bril
 3. Copiar los archivos a la placa:
 
    ```bash
-   mpremote connect COM3 fs cp config.py led.py main.py : + fs mkdir :www + fs cp www/index.html :www/index.html
+   mpremote connect COM3 fs cp config.py led.py mqtt_bridge.py main.py : + fs mkdir :www + fs cp www/index.html :www/index.html
    ```
 
 4. Reiniciar y ver la IP en el monitor serie:
@@ -75,23 +85,45 @@ queda en <http://192.168.4.1/>.
 Además de la web, el color se puede cambiar desde el monitor serie (USB, o el
 de Wokwi) escribiendo una línea y Enter: `#ff0080`, `255 0 128` u `off`.
 
+## Acceso desde internet (GitHub Pages + MQTT)
+
+```
+celular / PC ──wss──▶ broker.hivemq.com ◀──mqtt── ESP32 (real o Wokwi)
+ (GitHub Pages)        tópicos esp32rgb/<DEVICE_ID>/…
+```
+
+1. En GitHub: **Settings → Pages → Build and deployment → Deploy from a
+   branch → `main` / `(root)` → Save** (el repo tiene que ser público en el
+   plan gratuito).
+2. A los minutos la página queda en
+   <https://genartificial0001.github.io/esp32rgb/>.
+3. La placa se identifica por `DEVICE_ID` en `config.py`. La página usa por
+   defecto `genartificial0001-rgb`; para otra placa: `…/esp32rgb/?id=mi-placa`.
+
+Arriba a la derecha la página muestra **Placa en línea / desconectada**, y en
+el panel el color que la placa confirmó haber aplicado.
+
+Tópicos: `color` (página → placa), `state` (placa → página) y `status`
+(`online`/`offline`). Los tres son retenidos: la placa recibe el último color
+aunque se conecte después.
+
 ## Simulación en Wokwi
 
 La carpeta `wokwi/` tiene el circuito listo: ESP32 DevKit C v4 + LED RGB de
 cátodo común en GPIO 25/26/27 con resistencias de 220 Ω.
 
-1. Crear un proyecto **MicroPython** (no Arduino):
-   <https://wokwi.com/projects/new/micropython-esp32>
-2. Reemplazar `diagram.json` por `wokwi/diagram.json`.
-3. Pegar `main.py` y `led.py`, y como `config.py` usar `wokwi/config.py`
-   (red `Wokwi-GUEST`, modo `rgb_pwm`). Agregar también `index.html` en la
-   raíz: Wokwi no admite carpetas y `main.py` lo busca ahí si no existe `www/`.
-4. Play y, en el monitor serie, escribir `#00ff88` + Enter.
+1. Crear un proyecto **MicroPython** (no Arduino, no sirve uno con
+   `sketch.ino`): <https://wokwi.com/projects/new/micropython-esp32>
+2. En la pestaña `diagram.json`, reemplazar todo por `wokwi/diagram.json`
+   (el LED queda conectado solo).
+3. Pegar `main.py`. Con el menú ▾ de las pestañas → **New file...** crear
+   `led.py`, `mqtt_bridge.py` y `config.py` (este último con el contenido de
+   `wokwi/config.py`: red `Wokwi-GUEST`, modo `rgb_pwm`).
+4. Play. Cuando el monitor serie muestre `MQTT conectado`, abrir la página de
+   GitHub Pages y elegir un color: el LED del simulador cambia en ~1 s.
 
-En el plan gratuito de Wokwi **no se puede abrir la página web** del ESP32
-simulado: las conexiones entrantes necesitan el Private IoT Gateway (solo para
-cuentas pagas, en <http://localhost:9080/>). Por eso en la simulación el color
-se controla por la consola serie; la página web se prueba con la placa real.
+En la simulación también se puede escribir `#00ff88` + Enter en el monitor
+serie.
 
 ## API
 
@@ -112,5 +144,7 @@ curl -X POST "http://192.168.4.1/api/color?hex=00ff88"
 ## Nota de seguridad
 
 `config.py` contiene la clave del Wi-Fi: no subir al repositorio la versión con
-credenciales reales. El servidor no tiene autenticación; cualquiera en la misma
-red puede cambiar el color.
+credenciales reales. Nada tiene autenticación: cualquiera en la misma red puede
+usar la API local, y el broker MQTT es público, así que cualquiera que conozca
+el `DEVICE_ID` puede cambiar el color. Para algo más que una demo, usar un
+`DEVICE_ID` difícil de adivinar o un broker propio con usuario y clave.

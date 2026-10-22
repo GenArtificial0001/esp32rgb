@@ -16,3 +16,8 @@ COMMON_ANODE = False
 SINGLE_PIN = 2
 
 HTTP_PORT = 80
+
+MQTT_ENABLED = True
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+DEVICE_ID = "genartificial0001-rgb"

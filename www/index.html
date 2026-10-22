@@ -96,6 +96,11 @@
   .actions button:active, .presets button:active { transform: scale(.96); }
   .actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+  .confirm { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+  .confirm strong { color: var(--text); font-family: ui-monospace, Consolas, monospace; }
+  .swatch { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: #000; flex: none; }
+  .dot.wait::before { background: #f5b942; }
+
   /* Celular acostado o pantallas anchas: selector a la izquierda, controles a la derecha. */
   @media (min-width: 760px), (orientation: landscape) and (min-width: 560px) {
     .app { max-width: 1000px; grid-template-columns: 1.2fr 1fr; grid-template-rows: auto 1fr; }
@@ -126,6 +131,10 @@
       <div class="label"><span>Colores rápidos</span></div>
       <div class="presets" id="presets"></div>
     </div>
+    <div class="confirm">
+      <span class="swatch" id="ledSwatch"></span>
+      <span>Color en la placa: <strong id="ledHex">—</strong></span>
+    </div>
     <div class="actions">
       <button id="off">Apagar</button>
       <button id="white" class="primary">Blanco</button>
@@ -138,12 +147,25 @@
   const PRESETS = ["#ff0000", "#ff7f00", "#ffff00", "#00ff00", "#00ffff",
                    "#0000ff", "#8b00ff", "#ff00aa", "#ffb070", "#ffffff"];
 
+  // Dos formas de llegar a la placa:
+  //  - "local": la página la sirve la propia ESP32 (http://IP) -> API HTTP.
+  //  - "mqtt":  la página está publicada en internet (GitHub Pages) o se fuerza
+  //             con ?mqtt=1 -> broker MQTT público; así funciona también con
+  //             la placa simulada en Wokwi, que no acepta conexiones entrantes.
+  const params = new URLSearchParams(location.search);
+  const DEVICE_ID = params.get("id") || "genartificial0001-rgb";  // = config.DEVICE_ID
+  const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
+  const MODE = (location.protocol === "http:" && !params.has("mqtt")) ? "local" : "mqtt";
+  const TOPIC = `esp32rgb/${DEVICE_ID}/`;
+
   // "base" es el color elegido a pleno; la placa recibe base × brillo.
-  let base = "#000000";
+  let base = "#ffffff";
   let bright = 100;
+  let touched = false;  // el usuario ya eligió algo: no pisar su selección con el estado remoto
 
   const rgbOf = (h) => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
   const hexOf = (rgb) => "#" + rgb.map(v => v.toString(16).padStart(2, "0")).join("");
+  const output = () => hexOf(rgbOf(base).map(v => Math.round(v * bright / 100)));
 
   function render() {
     $("color").value = base;
@@ -155,26 +177,120 @@
       .forEach(b => b.classList.toggle("on", b.dataset.c === base));
   }
 
-  // "Último gana": mientras hay una petición en curso solo se guarda el color
-  // más reciente, así arrastrar el dedo no satura a la ESP32.
-  let busy = false, pending = null;
-  async function push() {
-    const [r, g, b] = rgbOf(base).map(v => Math.round(v * bright / 100));
-    if (busy) { pending = [r, g, b]; return; }
-    busy = true;
-    try {
-      let next = [r, g, b];
-      while (next) {
-        pending = null;
-        const res = await fetch(`/api/color?r=${next[0]}&g=${next[1]}&b=${next[2]}`, { method: "POST" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        next = pending;
+  function showLed(hex) {
+    $("ledHex").textContent = hex.toUpperCase();
+    $("ledSwatch").style.background = hex;
+  }
+
+  function setStatus(msg, cls) {
+    $("status").textContent = msg;
+    $("status").className = "dot " + cls;
+  }
+
+  // Al recibir el color actual de la placa se usa como base con brillo 100%;
+  // si estaba apagada se muestra blanco con brillo 0.
+  function adoptRemote(hex) {
+    showLed(hex);
+    if (touched) return;
+    if (hex === "#000000") { base = "#ffffff"; bright = 0; }
+    else { base = hex; bright = 100; }
+    $("bright").value = bright;
+    render();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cliente MQTT 3.1.1 mínimo sobre WebSocket (solo QoS 0: CONNECT, PUBLISH,
+  // SUBSCRIBE, PINGREQ). Escrito a mano para no depender de librerías ni CDN.
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const str = (s) => { const b = enc.encode(s); return [b.length >> 8, b.length & 255, ...b]; };
+  function packet(type, body) {
+    const len = []; let n = body.length;
+    do { let d = n % 128; n = Math.floor(n / 128); if (n) d |= 128; len.push(d); } while (n);
+    return new Uint8Array([type, ...len, ...body]);
+  }
+
+  const mqtt = {
+    ws: null, ready: false, buf: new Uint8Array(0), pingTimer: null,
+    connect() {
+      setStatus("Conectando…", "wait");
+      const ws = this.ws = new WebSocket(MQTT_URL, "mqtt");
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => {
+        const cid = "web-" + Math.random().toString(16).slice(2, 10);
+        // Nivel 4 = MQTT 3.1.1; flags 0x02 = sesión limpia; keepalive 60 s.
+        ws.send(packet(0x10, [...str("MQTT"), 4, 0x02, 0, 60, ...str(cid)]));
+      };
+      ws.onmessage = (e) => this.feed(new Uint8Array(e.data));
+      ws.onclose = () => {
+        this.ready = false; clearInterval(this.pingTimer);
+        setStatus("Sin conexión al broker", "err");
+        setTimeout(() => this.connect(), 3000);
+      };
+    },
+    feed(chunk) {
+      // Un mensaje WebSocket puede traer varios paquetes MQTT, o uno partido.
+      const all = new Uint8Array(this.buf.length + chunk.length);
+      all.set(this.buf); all.set(chunk, this.buf.length);
+      let i = 0;
+      while (i + 2 <= all.length) {
+        let len = 0, mul = 1, j = i + 1, d;
+        do {
+          if (j >= all.length) { this.buf = all.slice(i); return; }
+          d = all[j++]; len += (d & 127) * mul; mul *= 128;
+        } while (d & 128);
+        if (j + len > all.length) break;
+        this.handle(all[i] >> 4, all.subarray(j, j + len));
+        i = j + len;
       }
+      this.buf = all.slice(i);
+    },
+    handle(type, body) {
+      if (type === 2) {           // CONNACK
+        if (body[1] !== 0) { setStatus("Broker rechazó la conexión", "err"); return; }
+        this.ready = true;
+        this.ws.send(packet(0x82, [0, 1, ...str(TOPIC + "state"), 0, ...str(TOPIC + "status"), 0]));
+        this.pingTimer = setInterval(() => this.ws.send(new Uint8Array([0xc0, 0])), 30000);
+        setStatus("Esperando placa…", "wait");
+      } else if (type === 3) {    // PUBLISH (QoS 0: sin packet id)
+        const tl = (body[0] << 8) | body[1];
+        const topic = dec.decode(body.subarray(2, 2 + tl));
+        const msg = dec.decode(body.subarray(2 + tl)).trim();
+        if (topic.endsWith("/status")) {
+          if (msg === "online") setStatus("Placa en línea", "ok");
+          else setStatus("Placa desconectada", "err");
+        } else if (topic.endsWith("/state") && /^#[0-9a-f]{6}$/i.test(msg)) {
+          adoptRemote(msg.toLowerCase());
+        }
+      }
+    },
+    publish(topic, msg) {
+      // retain: la placa recibe el último color aunque se conecte después.
+      if (this.ready) this.ws.send(packet(0x31, [...str(topic), ...enc.encode(msg)]));
+    },
+  };
+
+  // ---------------------------------------------------------------------------
+  // Envío del color. Se limita a uno cada 120 ms y siempre sale el último, así
+  // arrastrar el dedo no satura a la placa (ni al broker).
+  let sendTimer = null, lastSent = 0;
+  function push() {
+    touched = true;
+    const wait = Math.max(0, 120 - (Date.now() - lastSent));
+    clearTimeout(sendTimer);
+    sendTimer = setTimeout(sendNow, wait);
+  }
+
+  async function sendNow() {
+    lastSent = Date.now();
+    const hex = output();
+    if (MODE === "mqtt") { mqtt.publish(TOPIC + "color", hex); return; }
+    try {
+      const res = await fetch(`/api/color?hex=${hex.slice(1)}`, { method: "POST" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      showLed((await res.json()).hex);
       setStatus("Conectado", "ok");
     } catch (e) {
       setStatus("Sin conexión", "err");
-    } finally {
-      busy = false;
     }
   }
 
@@ -182,11 +298,6 @@
   function choose(hex) {
     if (bright === 0) { bright = 100; $("bright").value = 100; }
     base = hex.toLowerCase(); render(); push();
-  }
-
-  function setStatus(msg, cls) {
-    $("status").textContent = msg;
-    $("status").className = "dot " + cls;
   }
 
   // "input" se dispara mientras se mueve el dedo (Android/Chrome);
@@ -204,14 +315,15 @@
     $("presets").appendChild(b);
   });
 
-  // Al abrir la página se toma el color actual de la placa como base, con
-  // brillo 100%; si estaba apagada se muestra blanco con brillo 0.
-  fetch("/api/color").then(r => r.json()).then(c => {
-    base = hexOf([c.r, c.g, c.b]);
-    if (base === "#000000") { bright = 0; $("bright").value = 0; base = "#ffffff"; }
-    render();
-    setStatus("Conectado", "ok");
-  }).catch(() => { render(); setStatus("Sin conexión", "err"); });
+  render();
+  if (MODE === "mqtt") {
+    mqtt.connect();
+  } else {
+    fetch("/api/color").then(r => r.json()).then(c => {
+      adoptRemote(c.hex);
+      setStatus("Conectado", "ok");
+    }).catch(() => setStatus("Sin conexión", "err"));
+  }
 </script>
 </body>
 </html>

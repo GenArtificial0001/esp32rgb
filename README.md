@@ -20,6 +20,9 @@ La página funciona de dos formas:
 
 El último color se guarda en `color.json` y se restaura al reiniciar.
 
+📘 **Explicación paso a paso de todo el código (firmware, página web y Wokwi):
+[DOCUMENTACION.md](DOCUMENTACION.md)**
+
 ## Estructura
 
 ```

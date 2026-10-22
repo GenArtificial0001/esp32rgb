@@ -2,170 +2,216 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
 <title>Selector RGB · ESP32</title>
 <style>
   :root {
     --bg: #0f1115; --card: #181b22; --text: #e8eaf0; --muted: #8a90a0;
-    --line: #2a2f3a; --accent: #4f8cff;
+    --line: #2a2f3a; --accent: #4f8cff; --ok: #3ddc84; --err: #ff6b6b;
+    --gap: clamp(12px, 3vw, 20px);
+    --radius: clamp(16px, 4vw, 24px);
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
   body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center;
     background: var(--bg); color: var(--text);
-    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    padding: 16px;
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    /* touch-action evita el zoom por doble toque al tocar botones seguidos */
+    touch-action: manipulation;
+    padding: max(var(--gap), env(safe-area-inset-top)) max(var(--gap), env(safe-area-inset-right))
+             max(var(--gap), env(safe-area-inset-bottom)) max(var(--gap), env(safe-area-inset-left));
   }
-  .card {
-    width: 100%; max-width: 380px; background: var(--card);
-    border: 1px solid var(--line); border-radius: 18px; padding: 22px;
+  .app {
+    max-width: 560px; margin: 0 auto; min-height: 100%;
+    display: grid; gap: var(--gap); grid-template-rows: auto 1fr auto;
   }
-  h1 { font-size: 18px; margin: 0 0 4px; }
-  .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
-  .preview {
-    height: 120px; border-radius: 14px; margin-bottom: 18px;
-    display: grid; place-items: center; transition: background .15s, box-shadow .15s;
-    border: 1px solid var(--line);
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  h1 { font-size: clamp(18px, 5vw, 22px); margin: 0; }
+  .dot {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--muted); white-space: nowrap;
   }
-  .preview span {
-    font: 600 20px ui-monospace, Consolas, monospace;
-    background: rgba(0,0,0,.45); padding: 4px 10px; border-radius: 8px;
+  .dot::before {
+    content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--muted);
   }
-  .row { display: grid; grid-template-columns: 22px 1fr 44px; gap: 10px;
-         align-items: center; margin: 10px 0; }
-  .row label { font-weight: 700; }
-  .row output { text-align: right; font-family: ui-monospace, Consolas, monospace; color: var(--muted); }
-  input[type=range] { width: 100%; height: 8px; border-radius: 6px; appearance: none; outline: none; }
+  .dot.ok::before { background: var(--ok); }
+  .dot.err::before { background: var(--err); }
+
+  /* El input type=color ocupa toda la tarjeta: cualquier toque la abre. */
+  .picker {
+    position: relative; min-height: clamp(220px, 45dvh, 520px);
+    border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--line); cursor: pointer;
+    transition: box-shadow .2s;
+  }
+  .picker input {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    border: 0; padding: 0; margin: 0; cursor: pointer;
+    background: none; -webkit-appearance: none; appearance: none;
+  }
+  .picker input::-webkit-color-swatch-wrapper { padding: 0; }
+  .picker input::-webkit-color-swatch { border: 0; border-radius: 0; }
+  .picker input::-moz-color-swatch { border: 0; border-radius: 0; }
+  .picker .hint {
+    position: absolute; left: 50%; bottom: var(--gap); transform: translateX(-50%);
+    pointer-events: none; text-align: center;
+    background: rgba(0,0,0,.55); backdrop-filter: blur(6px);
+    padding: 10px 18px; border-radius: 999px; white-space: nowrap;
+  }
+  .hint strong { display: block; font-size: clamp(15px, 4.5vw, 18px); }
+  .hint span { font-size: 12px; color: #d0d4dd; }
+
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: var(--gap); display: grid; gap: var(--gap);
+  }
+  .label { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); margin-bottom: 10px; }
+
+  input[type=range] {
+    width: 100%; height: 14px; border-radius: 999px; outline: none; margin: 8px 0;
+    -webkit-appearance: none; appearance: none; background: var(--line);
+  }
   input[type=range]::-webkit-slider-thumb {
-    appearance: none; width: 20px; height: 20px; border-radius: 50%;
-    background: #fff; border: 2px solid #000; cursor: pointer;
+    -webkit-appearance: none; width: 32px; height: 32px; border-radius: 50%;
+    background: #fff; border: 3px solid var(--bg); box-shadow: 0 1px 6px rgba(0,0,0,.5);
   }
   input[type=range]::-moz-range-thumb {
-    width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 2px solid #000;
+    width: 28px; height: 28px; border-radius: 50%; background: #fff; border: 3px solid var(--bg);
   }
-  #r { background: linear-gradient(90deg, #000, #f00); }
-  #g { background: linear-gradient(90deg, #000, #0f0); }
-  #b { background: linear-gradient(90deg, #000, #00f); }
-  .picker { display: flex; gap: 10px; align-items: center; margin: 16px 0; }
-  input[type=color] { width: 52px; height: 40px; border: 0; padding: 0; background: none; cursor: pointer; }
-  .picker input[type=text] {
-    flex: 1; height: 40px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--bg); color: var(--text); padding: 0 12px;
-    font: 15px ui-monospace, Consolas, monospace;
-  }
-  .presets { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin: 16px 0; }
+
+  .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 12px; }
   .presets button {
-    aspect-ratio: 1; border-radius: 50%; border: 2px solid var(--line); cursor: pointer;
+    aspect-ratio: 1; width: 100%; border-radius: 50%; cursor: pointer;
+    border: 3px solid transparent; outline: 1px solid var(--line);
   }
-  .actions { display: flex; gap: 10px; }
+  .presets button.on { border-color: #fff; }
+
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .actions button {
-    flex: 1; height: 42px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--bg); color: var(--text); font-weight: 600; cursor: pointer;
+    min-height: 54px; border-radius: 14px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); cursor: pointer;
+    font-family: inherit; font-size: 16px; font-weight: 600;
   }
-  .actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .status { margin-top: 14px; font-size: 12px; color: var(--muted); min-height: 1.4em; }
-  .status.err { color: #ff6b6b; }
+  .actions button:active, .presets button:active { transform: scale(.96); }
+  .actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* Celular acostado o pantallas anchas: selector a la izquierda, controles a la derecha. */
+  @media (min-width: 760px), (orientation: landscape) and (min-width: 560px) {
+    .app { max-width: 1000px; grid-template-columns: 1.2fr 1fr; grid-template-rows: auto 1fr; }
+    header { grid-column: 1 / -1; }
+    .picker { min-height: 0; height: 100%; }
+    .panel { align-content: start; }
+  }
 </style>
 </head>
 <body>
-<main class="card">
-  <h1>Selector RGB</h1>
-  <p class="sub" id="mode">Luz incorporada de la ESP32</p>
+<main class="app">
+  <header>
+    <h1>Selector RGB</h1>
+    <span class="dot" id="status">Conectando…</span>
+  </header>
 
-  <div class="preview" id="preview"><span id="hexLabel">#000000</span></div>
+  <label class="picker" id="pickerCard">
+    <input type="color" id="color" value="#000000" aria-label="Elegir color de la luz">
+    <span class="hint"><strong id="hex">#000000</strong><span>Tocá para elegir un color</span></span>
+  </label>
 
-  <div class="row"><label for="r">R</label><input type="range" id="r" min="0" max="255" value="0"><output id="rv">0</output></div>
-  <div class="row"><label for="g">G</label><input type="range" id="g" min="0" max="255" value="0"><output id="gv">0</output></div>
-  <div class="row"><label for="b">B</label><input type="range" id="b" min="0" max="255" value="0"><output id="bv">0</output></div>
-
-  <div class="picker">
-    <input type="color" id="picker" value="#000000" aria-label="Selector de color">
-    <input type="text" id="hex" value="#000000" maxlength="7" aria-label="Color hexadecimal">
-  </div>
-
-  <div class="presets" id="presets"></div>
-
-  <div class="actions">
-    <button id="off">Apagar</button>
-    <button id="white" class="primary">Blanco</button>
-  </div>
-
-  <div class="status" id="status">Conectando…</div>
+  <section class="panel">
+    <div>
+      <div class="label"><span>Brillo</span><span id="brightVal">100%</span></div>
+      <input type="range" id="bright" min="0" max="100" value="100" aria-label="Brillo">
+    </div>
+    <div>
+      <div class="label"><span>Colores rápidos</span></div>
+      <div class="presets" id="presets"></div>
+    </div>
+    <div class="actions">
+      <button id="off">Apagar</button>
+      <button id="white" class="primary">Blanco</button>
+    </div>
+  </section>
 </main>
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const ch = ["r", "g", "b"].map($);
-  const PRESETS = ["#ff0000", "#ff7f00", "#ffff00", "#00ff00",
-                   "#00ffff", "#0000ff", "#8b00ff", "#ff00aa"];
+  const PRESETS = ["#ff0000", "#ff7f00", "#ffff00", "#00ff00", "#00ffff",
+                   "#0000ff", "#8b00ff", "#ff00aa", "#ffb070", "#ffffff"];
 
-  const toHex = (r, g, b) => "#" + [r, g, b].map(v => v.toString(16).padStart(2, "0")).join("");
-  const fromHex = (h) => {
-    const m = /^#?([0-9a-f]{6})$/i.exec(h.trim());
-    if (!m) return null;
-    const n = parseInt(m[1], 16);
-    return [n >> 16, (n >> 8) & 255, n & 255];
-  };
+  // "base" es el color elegido a pleno; la placa recibe base × brillo.
+  let base = "#000000";
+  let bright = 100;
 
-  function render([r, g, b]) {
-    [r, g, b].forEach((v, i) => { ch[i].value = v; $(["rv","gv","bv"][i]).textContent = v; });
-    const hex = toHex(r, g, b);
-    $("picker").value = hex;
-    if (document.activeElement !== $("hex")) $("hex").value = hex;
-    $("hexLabel").textContent = hex;
-    $("preview").style.background = hex;
-    $("preview").style.boxShadow = `0 0 40px ${hex}66`;
+  const rgbOf = (h) => { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+  const hexOf = (rgb) => "#" + rgb.map(v => v.toString(16).padStart(2, "0")).join("");
+
+  function render() {
+    $("color").value = base;
+    $("hex").textContent = base.toUpperCase();
+    $("brightVal").textContent = bright + "%";
+    $("bright").style.background = `linear-gradient(90deg, #000, ${base})`;
+    $("pickerCard").style.boxShadow = `0 0 60px ${base}55`;
+    document.querySelectorAll(".presets button")
+      .forEach(b => b.classList.toggle("on", b.dataset.c === base));
   }
 
-  // Envío con "último gana": mientras hay una petición en curso solo se guarda
-  // el color más reciente, así arrastrar un slider no satura a la ESP32.
+  // "Último gana": mientras hay una petición en curso solo se guarda el color
+  // más reciente, así arrastrar el dedo no satura a la ESP32.
   let busy = false, pending = null;
-  async function send(rgb) {
-    render(rgb);
-    if (busy) { pending = rgb; return; }
+  async function push() {
+    const [r, g, b] = rgbOf(base).map(v => Math.round(v * bright / 100));
+    if (busy) { pending = [r, g, b]; return; }
     busy = true;
     try {
-      const [r, g, b] = rgb;
-      const res = await fetch(`/api/color?r=${r}&g=${g}&b=${b}`, { method: "POST" });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      setStatus("Color aplicado ✓");
+      let next = [r, g, b];
+      while (next) {
+        pending = null;
+        const res = await fetch(`/api/color?r=${next[0]}&g=${next[1]}&b=${next[2]}`, { method: "POST" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        next = pending;
+      }
+      setStatus("Conectado", "ok");
     } catch (e) {
-      setStatus("Sin respuesta de la placa (" + e.message + ")", true);
+      setStatus("Sin conexión", "err");
     } finally {
       busy = false;
-      if (pending) { const next = pending; pending = null; send(next); }
     }
   }
 
-  function setStatus(msg, err = false) {
-    $("status").textContent = msg;
-    $("status").classList.toggle("err", err);
+  // Elegir un color con la luz apagada la vuelve a encender a pleno.
+  function choose(hex) {
+    if (bright === 0) { bright = 100; $("bright").value = 100; }
+    base = hex.toLowerCase(); render(); push();
   }
 
-  ch.forEach(el => el.addEventListener("input", () => send(ch.map(c => +c.value))));
-  $("picker").addEventListener("input", (e) => send(fromHex(e.target.value)));
-  $("hex").addEventListener("input", (e) => { const c = fromHex(e.target.value); if (c) send(c); });
-  $("off").addEventListener("click", () => send([0, 0, 0]));
-  $("white").addEventListener("click", () => send([255, 255, 255]));
+  function setStatus(msg, cls) {
+    $("status").textContent = msg;
+    $("status").className = "dot " + cls;
+  }
 
-  PRESETS.forEach(h => {
+  // "input" se dispara mientras se mueve el dedo (Android/Chrome);
+  // "change" cubre navegadores que solo avisan al cerrar el selector.
+  $("color").addEventListener("input", (e) => choose(e.target.value));
+  $("color").addEventListener("change", (e) => choose(e.target.value));
+  $("bright").addEventListener("input", (e) => { bright = +e.target.value; render(); push(); });
+  $("off").addEventListener("click", () => { bright = 0; $("bright").value = 0; render(); push(); });
+  $("white").addEventListener("click", () => { bright = 100; $("bright").value = 100; choose("#ffffff"); });
+
+  PRESETS.forEach(c => {
     const b = document.createElement("button");
-    b.style.background = h; b.title = h; b.setAttribute("aria-label", h);
-    b.addEventListener("click", () => send(fromHex(h)));
+    b.style.background = c; b.dataset.c = c; b.setAttribute("aria-label", "Color " + c);
+    b.addEventListener("click", () => choose(c));
     $("presets").appendChild(b);
   });
 
-  const MODES = {
-    neopixel: "LED WS2812 incorporado",
-    rgb_pwm: "LED RGB (PWM por canal)",
-    single: "LED monocolor: el color se aplica como brillo",
-  };
-
+  // Al abrir la página se toma el color actual de la placa como base, con
+  // brillo 100%; si estaba apagada se muestra blanco con brillo 0.
   fetch("/api/color").then(r => r.json()).then(c => {
-    render([c.r, c.g, c.b]);
-    $("mode").textContent = MODES[c.mode] || c.mode;
-    setStatus("Conectado a la placa");
-  }).catch(() => setStatus("No se pudo leer el estado de la placa", true));
+    base = hexOf([c.r, c.g, c.b]);
+    if (base === "#000000") { bright = 0; $("bright").value = 0; base = "#ffffff"; }
+    render();
+    setStatus("Conectado", "ok");
+  }).catch(() => { render(); setStatus("Sin conexión", "err"); });
 </script>
 </body>
 </html>

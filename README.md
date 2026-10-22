@@ -1,9 +1,14 @@
 # esp32rgb — Selector RGB web con MicroPython
 
-Servidor web que corre **dentro de la ESP32** (MicroPython) y sirve una página con
-un selector de color (sliders R/G/B, selector nativo, hex y colores rápidos). Cada
-cambio se envía a la placa y se aplica al LED incorporado al instante. El último
-color se guarda en `color.json` y se restaura al reiniciar.
+Servidor web que corre **dentro de la ESP32** (MicroPython) y sirve una página
+pensada para el celular: toda la tarjeta de color es un `<input type="color">`,
+así que se toca con el dedo y se elige el color en el selector nativo del
+teléfono, sin escribir códigos. Suma un control de brillo, colores rápidos y
+botones Apagar/Blanco. La página es responsiva: en vertical apila todo, y con
+el celular acostado o en PC muestra el selector y los controles lado a lado.
+
+Cada cambio se envía a la placa y se aplica al LED incorporado al instante. El
+último color se guarda en `color.json` y se restaura al reiniciar.
 
 ## Estructura
 

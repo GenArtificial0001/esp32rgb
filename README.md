@@ -65,6 +65,29 @@ Mientras conecta al Wi-Fi el LED parpadea en azul. Si no logra conectar en
 15 s, la placa crea la red **`ESP32-RGB`** (clave `esp32rgb123`) y el selector
 queda en <http://192.168.4.1/>.
 
+## Consola serie
+
+Además de la web, el color se puede cambiar desde el monitor serie (USB, o el
+de Wokwi) escribiendo una línea y Enter: `#ff0080`, `255 0 128` u `off`.
+
+## Simulación en Wokwi
+
+La carpeta `wokwi/` tiene el circuito listo: ESP32 DevKit C v4 + LED RGB de
+cátodo común en GPIO 25/26/27 con resistencias de 220 Ω.
+
+1. Crear un proyecto **MicroPython** (no Arduino):
+   <https://wokwi.com/projects/new/micropython-esp32>
+2. Reemplazar `diagram.json` por `wokwi/diagram.json`.
+3. Pegar `main.py` y `led.py`, y como `config.py` usar `wokwi/config.py`
+   (red `Wokwi-GUEST`, modo `rgb_pwm`). Agregar también `index.html` en la
+   raíz: Wokwi no admite carpetas y `main.py` lo busca ahí si no existe `www/`.
+4. Play y, en el monitor serie, escribir `#00ff88` + Enter.
+
+En el plan gratuito de Wokwi **no se puede abrir la página web** del ESP32
+simulado: las conexiones entrantes necesitan el Private IoT Gateway (solo para
+cuentas pagas, en <http://localhost:9080/>). Por eso en la simulación el color
+se controla por la consola serie; la página web se prueba con la placa real.
+
 ## API
 
 | Método | Ruta | Descripción |

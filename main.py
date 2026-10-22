@@ -1,7 +1,10 @@
 # Punto de entrada: conecta el Wi-Fi y sirve el selector RGB por HTTP.
 # MicroPython ejecuta main.py automáticamente al arrancar la placa.
 import json
+import os
+import select
 import socket
+import sys
 import time
 
 import network
@@ -10,7 +13,20 @@ import config
 from led import Led
 
 STATE_FILE = "color.json"
-INDEX_FILE = "www/index.html"
+
+
+def find_index():
+    # Wokwi web no permite carpetas: ahí index.html queda en la raíz.
+    for path in ("www/index.html", "index.html"):
+        try:
+            os.stat(path)
+            return path
+        except OSError:
+            pass
+    return None
+
+
+INDEX_FILE = find_index()
 
 
 def load_color():
@@ -85,7 +101,9 @@ def send(cl, status, ctype, body):
 
 def send_file(cl, path, ctype):
     # Se envía en bloques para no cargar el HTML completo en la RAM de la placa.
-    import os
+    if path is None:
+        send(cl, "404 Not Found", "text/plain", "Falta index.html en la placa")
+        return
     size = os.stat(path)[6]
     cl.send("HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\n"
             "Connection: close\r\n\r\n" % (ctype, size))
@@ -141,21 +159,55 @@ def handle(cl, led):
         send(cl, "404 Not Found", "text/plain", "No encontrado")
 
 
+def parse_serial(line):
+    # Acepta "#ff0080", "ff0080", "255 0 128", "255,0,128" u "off".
+    line = line.strip().lower()
+    if line in ("off", "apagar"):
+        return 0, 0, 0
+    parts = line.replace(",", " ").split()
+    if len(parts) == 3:
+        return tuple(int(p) for p in parts)
+    return color_from_params({"hex": line})
+
+
+def handle_serial(led):
+    line = sys.stdin.readline()
+    if not line.strip():
+        return
+    try:
+        led.set(*parse_serial(line))
+    except ValueError:
+        print("Formato: #RRGGBB | R G B | off")
+        return
+    save_color(*led.color)
+    print("Color:", "#%02x%02x%02x" % led.color)
+
+
 def serve(led):
     addr = socket.getaddrinfo("0.0.0.0", config.HTTP_PORT)[0][-1]
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(addr)
     s.listen(4)
+    # Se atienden a la vez el servidor HTTP y la consola serie: así el color
+    # se puede cambiar por USB o en Wokwi, donde la web no es accesible gratis.
+    poller = select.poll()
+    poller.register(s, select.POLLIN)
+    poller.register(sys.stdin, select.POLLIN)
+    print("Consola serie: escribí #RRGGBB, 'R G B' u 'off' y Enter")
     while True:
-        cl, remote = s.accept()
-        cl.settimeout(5)
-        try:
-            handle(cl, led)
-        except Exception as e:  # un cliente roto no debe tumbar el servidor
-            print("Error atendiendo", remote, e)
-        finally:
-            cl.close()
+        for obj, _ in poller.poll():
+            if obj is s:
+                cl, remote = s.accept()
+                cl.settimeout(5)
+                try:
+                    handle(cl, led)
+                except Exception as e:  # un cliente roto no debe tumbar el servidor
+                    print("Error atendiendo", remote, e)
+                finally:
+                    cl.close()
+            else:
+                handle_serial(led)
 
 
 def main():

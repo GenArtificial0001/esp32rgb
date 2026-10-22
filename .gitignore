@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+color.json
+.env
+config_local.py
